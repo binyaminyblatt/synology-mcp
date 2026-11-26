@@ -60,6 +60,41 @@ async def get_terminal_settings() -> str:
 
 
 @mcp.tool()
+async def set_terminal_settings(
+    ssh_enabled: bool | None = None,
+    ssh_port: int | None = None,
+    telnet_enabled: bool | None = None,
+) -> str:
+    """
+    Update SSH / Telnet terminal access settings. [control]
+
+    Args:
+        ssh_enabled: Optional True/False to enable or disable SSH
+        ssh_port: Optional SSH port (1-65535)
+        telnet_enabled: Optional True/False to enable or disable Telnet
+    """
+    current = check(await api.call("SYNO.Core.Terminal", "get", version=3))
+    new_ssh = ssh_enabled if ssh_enabled is not None else bool(current.get("enable_ssh"))
+    new_port = ssh_port if ssh_port is not None else int(current.get("ssh_port", 22))
+    new_telnet = telnet_enabled if telnet_enabled is not None else bool(current.get("enable_telnet"))
+    check(await api.call(
+        "SYNO.Core.Terminal",
+        "set",
+        version=3,
+        http_method="POST",
+        enable_ssh="true" if new_ssh else "false",
+        ssh_port=new_port,
+        enable_telnet="true" if new_telnet else "false",
+    ))
+    return fmt({
+        "ssh_enabled": new_ssh,
+        "ssh_port": new_port,
+        "telnet_enabled": new_telnet,
+        "ok": True,
+    })
+
+
+@mcp.tool()
 async def get_snmp_settings() -> str:
     """Get SNMP service settings."""
     data = check(await api.call("SYNO.Core.SNMP", "get", version=1))
