@@ -1,10 +1,6 @@
 services:
   synology-mcp:
-    # Builds directly from your GitHub fork so you can paste this straight into
-    # Synology Container Manager -> Project -> Create -> "Create docker-compose.yml"
-    build:
-      context: https://github.com/binyaminyblatt/synology-mcp.git#main
-    image: synology-mcp:latest
+    image: ghcr.io/binyaminyblatt/synology-mcp:latest
     container_name: synology-mcp
     restart: unless-stopped
     ports:
