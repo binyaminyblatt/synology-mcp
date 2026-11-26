@@ -130,3 +130,94 @@ async def test_get_system_info_formats_fields():
     assert out["hostname"] == "nas-test"
     assert out["uptime"] == "1d 1h 1m"
     assert out["temperature_c"] == 47
+
+
+# ── Container Manager / Docker tools & annotations ────────────────────────────
+
+async def test_container_manager_tools():
+    from synology_mcp.tools import docker
+
+    def handler(request):
+        p = _params(request)
+        if p["api"] == "SYNO.API.Auth":
+            return _ok({"sid": "S", "synotoken": "TOK1"})
+        if p["api"] == "SYNO.Docker.Container" and p["method"] == "get":
+            assert p["name"] == "homeassistant"
+            return _ok({
+                "profile": {
+                    "image": "ghcr.io/home-assistant/home-assistant:stable",
+                    "env_variables": [{"key": "TZ", "value": "Asia/Jerusalem"}],
+                    "port_bindings": [{"host_port": 8123, "container_port": 8123}],
+                    "volume_bindings": [{"host_volume_file": "/docker/ha", "mount_point": "/config"}],
+                    "use_host_network": True,
+                },
+                "details": {"status": "running", "up_time": 3600},
+            })
+        if p["api"] == "SYNO.Docker.Project" and p["method"] == "list":
+            return _ok({
+                "p1": {
+                    "id": "proj-uuid-1",
+                    "name": "media-stack",
+                    "status": "RUNNING",
+                    "share_path": "/docker/media-stack",
+                    "containerIds": ["c1", "c2"],
+                }
+            })
+        if p["api"] == "SYNO.Docker.Project" and p["method"] == "get":
+            return _ok({
+                "id": "proj-uuid-1",
+                "name": "media-stack",
+                "status": "RUNNING",
+                "share_path": "/docker/media-stack",
+                "content": "services:\n  sonarr:\n    image: lscr.io/linuxserver/sonarr:latest\n",
+            })
+        if p["api"] == "SYNO.Docker.Network" and p["method"] == "list":
+            return _ok({
+                "network": [
+                    {"id": "net1234567890", "name": "bridge", "driver": "bridge", "subnet": "172.17.0.0/16"}
+                ]
+            })
+        return _err(102)
+
+    install_handler(handler)
+
+    details = json.loads(await docker.get_container_details("homeassistant"))
+    assert details["image"] == "ghcr.io/home-assistant/home-assistant:stable"
+    assert details["use_host_network"] is True
+
+    proj = json.loads(await docker.get_docker_project_details("media-stack"))
+    assert proj["id"] == "proj-uuid-1"
+    assert "sonarr:" in proj["compose_yaml"]
+
+    nets = json.loads(await docker.list_docker_networks())
+    assert nets["total"] == 1
+    assert nets["networks"][0]["name"] == "bridge"
+
+
+async def test_tool_annotations_populated():
+    from synology_mcp.app import mcp
+
+    tools = await mcp.list_tools()
+    by_name = {t.name: t for t in tools}
+    assert len(by_name) >= 90
+
+    def _ro(t):
+        return getattr(t.annotations, "read_only_hint", getattr(t.annotations, "readOnlyHint", None))
+
+    def _dest(t):
+        return getattr(t.annotations, "destructive_hint", getattr(t.annotations, "destructiveHint", None))
+
+    # Read-only tools
+    assert _ro(by_name["list_containers"]) is True
+    assert _ro(by_name["get_container_details"]) is True
+    assert _ro(by_name["get_docker_project_details"]) is True
+    assert _ro(by_name["read_text_file"]) is True
+
+    # Write tools (non-destructive)
+    assert _ro(by_name["set_container_state"]) is False
+    assert _ro(by_name["manage_docker_project"]) is False
+
+    # Destructive tools
+    assert _dest(by_name["delete_container"]) is True
+    assert _dest(by_name["delete_docker_image"]) is True
+    assert _dest(by_name["reboot_nas"]) is True

@@ -216,8 +216,6 @@ async def delete_item(paths: str, recursive: bool = True) -> str:
         paths: Comma-separated paths to delete
         recursive: Delete folder contents recursively (default True)
     """
-    # The blocking 'delete' method is reliable; the async start/status variant
-    # has been observed to report success without removing the items.
     check(await api.call(
         "SYNO.FileStation.Delete", "delete", version=2,
         path=paths, recursive=recursive,
@@ -312,3 +310,61 @@ async def create_share_link(path: str, password: str | None = None) -> str:
     return fmt({"links": [{"path": lnk.get("path"), "url": lnk.get("url"),
                            "link_id": lnk.get("id"), "error": lnk.get("error")}
                           for lnk in links]})
+
+
+@mcp.tool()
+async def read_text_file(path: str, max_chars: int = 50000) -> str:
+    """
+    Read the text contents of a file on the NAS (ideal for inspecting docker-compose.yml,
+    config files, scripts, or logs under /docker or other shared folders).
+
+    Args:
+        path: Full file path on the NAS, e.g. "/docker/myapp/docker-compose.yml"
+        max_chars: Maximum characters to return (default 50000)
+    """
+    import json as _json
+    raw = await api.download_raw(
+        "SYNO.FileStation.Download", "download", version=2,
+        path=_json.dumps([path]), mode='"open"',
+    )
+    text = raw.decode("utf-8", errors="replace")
+    truncated = len(text) > max_chars
+    return fmt({
+        "path": path,
+        "size_bytes": len(raw),
+        "truncated": truncated,
+        "content": text[:max_chars],
+    })
+
+
+@mcp.tool()
+async def write_text_file(
+    folder_path: str,
+    filename: str,
+    content: str,
+    overwrite: bool = True,
+) -> str:
+    """
+    Write or update a UTF-8 text file in a shared folder on the NAS (e.g. creating or updating
+    a docker-compose.yml or config file). [control]
+
+    Args:
+        folder_path: Destination folder path, e.g. "/docker/myapp"
+        filename: File name to write, e.g. "docker-compose.yml"
+        content: Full text content to write
+        overwrite: Overwrite if the file already exists (default True)
+    """
+    raw = content.encode("utf-8")
+    res = check(await api.upload_file_bytes(
+        folder_path=folder_path,
+        filename=filename,
+        content=raw,
+        overwrite=overwrite,
+        create_parents=True,
+    ))
+    return fmt({
+        "path": f"{folder_path.rstrip('/')}/{filename}",
+        "bytes_written": len(raw),
+        "overwritten": overwrite,
+        "detail": res,
+    })
