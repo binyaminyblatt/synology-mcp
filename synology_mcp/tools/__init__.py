@@ -24,6 +24,7 @@ from . import (  # noqa: F401
     security,
     services,
     snapshots,
+    ssh,
     storage,
     surveillance,
     system,
