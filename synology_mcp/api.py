@@ -1,8 +1,8 @@
 """Async client for the Synology DSM 7 Web API.
 
 A thin wrapper around the ``entry.cgi`` gateway that handles login (including
-2FA via a trusted-device token), session caching and automatic
-re-authentication when a session expires.
+2FA via a trusted-device token), session caching, file download/upload, and
+automatic re-authentication when a session expires.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 _session_id: str | None = None
+_syno_token: str | None = None
 _client: httpx.AsyncClient | None = None
 
 # Synology SYNO.API.Auth error codes → human-readable hints.
@@ -38,6 +39,14 @@ _AUTH_ERRORS = {
 }
 
 
+def _default_headers() -> dict[str, str]:
+    headers: dict[str, str] = {}
+    if config.CF_ACCESS_CLIENT_ID and config.CF_ACCESS_CLIENT_SECRET:
+        headers["CF-Access-Client-Id"] = config.CF_ACCESS_CLIENT_ID
+        headers["CF-Access-Client-Secret"] = config.CF_ACCESS_CLIENT_SECRET
+    return headers
+
+
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
@@ -45,11 +54,13 @@ def _get_client() -> httpx.AsyncClient:
             base_url=config.URL,
             verify=config.VERIFY_SSL,
             timeout=config.TIMEOUT,
+            headers=_default_headers(),
         )
     return _client
 
 
 async def _login() -> str:
+    global _syno_token
     params = {
         "api": "SYNO.API.Auth",
         "version": "6",
@@ -58,6 +69,7 @@ async def _login() -> str:
         "passwd": config.PASSWORD,
         "session": config.SESSION_NAME,
         "format": "sid",
+        "enable_syno_token": "yes",
     }
     # A trusted-device token avoids needing a fresh OTP on every login.
     if config.DEVICE_ID:
@@ -72,6 +84,7 @@ async def _login() -> str:
         code = d.get("error", {}).get("code", "?")
         hint = _AUTH_ERRORS.get(code, "unknown error")
         raise RuntimeError(f"Synology authentication failed (code {code}: {hint})")
+    _syno_token = d["data"].get("synotoken")
     return d["data"]["sid"]
 
 
@@ -111,7 +124,7 @@ async def _ensure_session() -> str:
     return _session_id
 
 
-async def call(api: str, method: str, version: int = 1, **kwargs) -> dict:
+async def call(api: str, method: str, version: int = 1, http_method: str = "GET", **kwargs) -> dict:
     """Call a Synology API method. Re-authenticates once on session expiry.
 
     Keyword arguments become request parameters; ``None`` values are dropped.
@@ -125,18 +138,111 @@ async def call(api: str, method: str, version: int = 1, **kwargs) -> dict:
         "version": str(version),
         "_sid": sid,
     }
+    if _syno_token:
+        params["SynoToken"] = _syno_token
     params.update({k: v for k, v in kwargs.items() if v is not None})
 
-    r = await _get_client().get("/webapi/entry.cgi", params=params)
+    client = _get_client()
+    if http_method.upper() == "POST":
+        r = await client.post(
+            "/webapi/entry.cgi",
+            params={"_sid": sid, **({"SynoToken": _syno_token} if _syno_token else {})},
+            data=params,
+        )
+    else:
+        r = await client.get("/webapi/entry.cgi", params=params)
     d = r.json()
 
     # 119 = session timed out / invalid sid → re-auth and retry once.
-    if not d.get("success") and d.get("error", {}).get("code") == 119:
+    if not d.get("success") and d.get("error", {}).get("code") in (106, 107, 119):
         _session_id = None
-        params["_sid"] = await _ensure_session()
-        r = await _get_client().get("/webapi/entry.cgi", params=params)
+        sid = await _ensure_session()
+        params["_sid"] = sid
+        if _syno_token:
+            params["SynoToken"] = _syno_token
+        if http_method.upper() == "POST":
+            r = await client.post(
+                "/webapi/entry.cgi",
+                params={"_sid": sid, **({"SynoToken": _syno_token} if _syno_token else {})},
+                data=params,
+            )
+        else:
+            r = await client.get("/webapi/entry.cgi", params=params)
         d = r.json()
 
+    return d
+
+
+async def download_raw(api: str, method: str, version: int = 1, **kwargs) -> bytes:
+    """Call a Synology API method that returns raw file bytes (e.g. FileStation.Download)."""
+    global _session_id
+
+    sid = await _ensure_session()
+    params: dict[str, Any] = {
+        "api": api,
+        "method": method,
+        "version": str(version),
+        "_sid": sid,
+    }
+    if _syno_token:
+        params["SynoToken"] = _syno_token
+    params.update({k: v for k, v in kwargs.items() if v is not None})
+
+    r = await _get_client().get("/webapi/entry.cgi", params=params)
+    content_type = r.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            d = r.json()
+            if isinstance(d, dict) and d.get("success") is False:
+                if d.get("error", {}).get("code") in (106, 107, 119):
+                    _session_id = None
+                    params["_sid"] = await _ensure_session()
+                    if _syno_token:
+                        params["SynoToken"] = _syno_token
+                    r = await _get_client().get("/webapi/entry.cgi", params=params)
+                    return r.content
+                code = d.get("error", {}).get("code", "?")
+                raise RuntimeError(f"Synology download failed (code {code})")
+        except ValueError:
+            pass
+    return r.content
+
+
+async def upload_file_bytes(
+    folder_path: str,
+    filename: str,
+    content: bytes,
+    overwrite: bool = True,
+    create_parents: bool = True,
+) -> dict:
+    """Upload raw bytes as a file via ``SYNO.FileStation.Upload``."""
+    global _session_id
+
+    sid = await _ensure_session()
+    query_params: dict[str, Any] = {
+        "api": "SYNO.FileStation.Upload",
+        "method": "upload",
+        "version": "2",
+        "_sid": sid,
+    }
+    if _syno_token:
+        query_params["SynoToken"] = _syno_token
+
+    data = {
+        "path": folder_path,
+        "create_parents": "true" if create_parents else "false",
+        "overwrite": "true" if overwrite else "false",
+    }
+    files = {"file": (filename, content, "application/octet-stream")}
+    r = await _get_client().post("/webapi/entry.cgi", params=query_params, data=data, files=files)
+    d = r.json()
+    if not d.get("success") and d.get("error", {}).get("code") in (106, 107, 119):
+        _session_id = None
+        query_params["_sid"] = await _ensure_session()
+        if _syno_token:
+            query_params["SynoToken"] = _syno_token
+        r = await _get_client().post("/webapi/entry.cgi", params=query_params, data=data, files=files)
+        d = r.json()
     return d
 
 

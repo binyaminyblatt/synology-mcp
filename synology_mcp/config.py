@@ -23,7 +23,7 @@ def _load_dotenv() -> None:
     for env_path in candidates:
         if not env_path.exists():
             continue
-        for line in env_path.read_text().splitlines():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -50,6 +50,10 @@ PASSWORD: str = os.getenv("SYNOLOGY_PASS", "")
 OTP_CODE: str = os.getenv("SYNOLOGY_OTP", "")
 DEVICE_ID: str = os.getenv("SYNOLOGY_DEVICE_ID", "")
 
+# ── Optional Cloudflare Access Service Token headers (when NAS is behind CF Access) ──
+CF_ACCESS_CLIENT_ID: str = os.getenv("SYNOLOGY_CF_ACCESS_CLIENT_ID", "")
+CF_ACCESS_CLIENT_SECRET: str = os.getenv("SYNOLOGY_CF_ACCESS_CLIENT_SECRET", "")
+
 # ── Behaviour ──────────────────────────────────────────────────────────────────
 VERIFY_SSL: bool = _flag("SYNOLOGY_VERIFY_SSL", False)
 TIMEOUT: float = float(os.getenv("SYNOLOGY_TIMEOUT", "30"))
@@ -59,6 +63,16 @@ DEVICE_NAME: str = os.getenv("SYNOLOGY_DEVICE_NAME", "SynologyMCP")
 # Destructive power operations (reboot / shutdown / install DSM update) are
 # disabled unless this is explicitly turned on.
 ENABLE_POWER_CONTROL: bool = _flag("SYNOLOGY_ENABLE_POWER_CONTROL", False)
+
+# ── Transport & Remote Streamable HTTP Server ─────────────────────────────────
+# Transport can be "stdio" (default), "streamable-http", or "sse"
+MCP_TRANSPORT: str = os.getenv("MCP_TRANSPORT", "stdio").strip().lower()
+MCP_HTTP: bool = _flag("MCP_HTTP", False)
+MCP_HOST: str = os.getenv("MCP_HOST", "0.0.0.0").strip()
+MCP_PORT: int = int(os.getenv("MCP_PORT", "8765"))
+MCP_PATH: str = os.getenv("MCP_PATH", "/mcp").strip()
+# Optional Bearer token required on HTTP requests when running in HTTP/SSE mode
+MCP_API_TOKEN: str = os.getenv("MCP_API_TOKEN", "").strip()
 
 
 def validate() -> None:

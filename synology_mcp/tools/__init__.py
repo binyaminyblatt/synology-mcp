@@ -5,6 +5,7 @@ decorators, which attach the tools to ``synology_mcp.app.mcp``.
 """
 
 from . import (  # noqa: F401
+    active_backup,
     admin,
     backup,
     dashboard,
@@ -22,6 +23,7 @@ from . import (  # noqa: F401
     scheduler,
     security,
     services,
+    snapshots,
     storage,
     surveillance,
     system,

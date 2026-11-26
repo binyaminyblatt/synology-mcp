@@ -3,13 +3,70 @@
 from __future__ import annotations
 
 import functools
+import inspect
 import json
+import re
 import time
 from datetime import UTC, datetime
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.mcpserver import MCPServer as _MCPClass
+except ImportError:
+    from mcp.server.fastmcp import FastMCP as _MCPClass
 
-mcp = FastMCP("Synology NAS")
+from mcp.types import ToolAnnotations
+
+from . import config
+
+try:
+    mcp = _MCPClass(
+        "Synology NAS",
+        host=config.MCP_HOST,
+        port=config.MCP_PORT,
+        streamable_http_path=config.MCP_PATH,
+    )
+except TypeError:
+    mcp = _MCPClass("Synology NAS")
+
+_DESTRUCTIVE_RE = re.compile(
+    r"(?:^|_)(delete|remove|clear|cleanup|restart|reboot|shutdown|prune|destroy|purge)(?:_|$)",
+    re.IGNORECASE,
+)
+
+_orig_tool = mcp.tool
+
+
+def _annotated_tool(*t_args, **t_kwargs):
+    """Wrap ``mcp.tool()`` to auto-populate MCP ``ToolAnnotations`` when omitted.
+
+    - Tools whose docstring contains ``[control]`` or ``[power]`` are marked
+      ``readOnlyHint=False``.
+    - Tools matching destructive verbs (delete, remove, restart, reboot, shutdown,
+      prune, clear) or ``[power]`` are marked ``destructiveHint=True``.
+    - All other tools default to ``readOnlyHint=True, destructiveHint=False``.
+    """
+    if "annotations" in t_kwargs and t_kwargs["annotations"] is not None:
+        return _orig_tool(*t_args, **t_kwargs)
+
+    def decorator(fn):
+        doc = inspect.getdoc(fn) or ""
+        name = t_kwargs.get("name") or fn.__name__
+        is_destructive = bool(_DESTRUCTIVE_RE.search(name)) or "[power]" in doc
+        is_write = is_destructive or "[control]" in doc or name.startswith(
+            ("set_", "create_", "add_", "run_", "manage_", "start_", "stop_", "build_", "pull_", "upgrade_", "write_", "copy_", "rename_", "extract_")
+        )
+        t_kwargs["annotations"] = ToolAnnotations(
+            readOnlyHint=not is_write,
+            destructiveHint=is_destructive,
+            idempotentHint=not is_write,
+            openWorldHint=False,
+        )
+        return _orig_tool(*t_args, **t_kwargs)(fn)
+
+    return decorator
+
+
+mcp.tool = _annotated_tool  # type: ignore[method-assign]
 
 
 def ttl_cache(seconds: float):
