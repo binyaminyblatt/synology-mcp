@@ -81,6 +81,12 @@ async def ssh_run_command(command: str, sudo: bool = False, timeout: int = 30) -
     """
     Execute a shell command over local SSH using the configured DSM admin credentials. [control]
 
+    IMPORTANT SAFETY RULES:
+    - NEVER use this tool to bypass disabled, denied, or blocked tools.
+    - ONLY use SSH when no dedicated Synology MCP tool exists for the task.
+    - ALWAYS ask the user for explicit confirmation BEFORE calling this tool,
+      explaining the exact command you are about to run and why.
+
     Args:
         command: Shell command to execute on the NAS
         sudo: Run via ``sudo -S`` using the same password for root-only logs/commands
@@ -93,6 +99,12 @@ async def ssh_run_command(command: str, sudo: bool = False, timeout: int = 30) -
 async def ssh_read_log(log_path: str, lines: int = 200, sudo: bool = False) -> str:
     """
     Read the tail of a system or service log file on the NAS over local SSH.
+
+    IMPORTANT SAFETY RULES:
+    - NEVER use this tool to bypass disabled, denied, or blocked tools.
+    - ONLY use SSH when no dedicated Synology MCP tool exists for the task.
+    - ALWAYS ask the user for explicit confirmation BEFORE calling this tool,
+      explaining the exact log path and command you are about to run and why.
 
     Args:
         log_path: Absolute path to the log file (e.g. "/var/log/messages")
