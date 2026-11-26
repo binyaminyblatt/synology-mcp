@@ -1,0 +1,19 @@
+services:
+  synology-mcp:
+    build: .
+    container_name: synology-mcp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      - MCP_HTTP=true
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8765
+      - MCP_PATH=/mcp
+      - MCP_API_TOKEN=${MCP_API_TOKEN:-}
+      - SYNOLOGY_URL=${SYNOLOGY_URL:-http://127.0.0.1:5000}
+      - SYNOLOGY_USER=${SYNOLOGY_USER}
+      - SYNOLOGY_PASS=${SYNOLOGY_PASS}
+      - SYNOLOGY_DEVICE_ID=${SYNOLOGY_DEVICE_ID:-}
+      - SYNOLOGY_VERIFY_SSL=${SYNOLOGY_VERIFY_SSL:-false}
+      - SYNOLOGY_ENABLE_POWER_CONTROL=${SYNOLOGY_ENABLE_POWER_CONTROL:-false}
